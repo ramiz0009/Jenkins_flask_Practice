@@ -3,4 +3,6 @@ pytest-mock
 Flask
 pymongo
 python-dotenv
+flask-pymongo
+
 
