@@ -1,9 +1,6 @@
-Flask==2.3.3
-Flask-PyMongo==2.3.0
-python-dotenv==1.0.0
-bson==0.5.10
-pytest==7.4.0
-pytest-html==3.2.0
-pytest-flask==1.2.0
-bandit==1.7.5
-safety==2.3.5
+pytest
+pytest-mock
+Flask
+pymongo
+python-dotenv
+
