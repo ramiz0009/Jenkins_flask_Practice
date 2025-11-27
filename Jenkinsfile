@@ -19,13 +19,8 @@ pipeline {
             steps {
                 echo '=== Installing Dependencies ==='
                 sh '''
-                    # Remove old virtual environment
                     rm -rf ${VENV_DIR}
-                    
-                    # Create virtual environment
                     python3 -m venv ${VENV_DIR}
-                    
-                    # Activate and install dependencies
                     . ${VENV_DIR}/bin/activate
                     pip install --upgrade pip
                     pip install -r requirements.txt
@@ -38,8 +33,6 @@ pipeline {
                 echo '=== Running Unit Tests ==='
                 sh '''
                     . ${VENV_DIR}/bin/activate
-                    
-                    # Run pytest with verbose output
                     pytest tests/ -v --tb=short || exit 1
                 '''
             }
@@ -74,24 +67,29 @@ pipeline {
                             sleep 2
                         fi
                         
-                        # Start application with environment variables
-                        . ${VENV_DIR}/bin/activate
-                        
-                        # Export environment variables before starting app
-                        export MONGO_URI="${MONGO_URI}"
-                        export SECRET_KEY="${SECRET_KEY}"
-                        
-                        # Start the application in background with nohup
-                        # Use absolute path for venv to ensure it persists
+                        # Start Flask app with Gunicorn and proper environment
                         cd ${WORKSPACE}
-                        nohup ${WORKSPACE}/${VENV_DIR}/bin/python3 app.py > app.log 2>&1 &
+                        
+                        # Use a wrapper script to ensure environment variables persist
+                        cat > run_app.sh << 'SCRIPT_EOF'
+#!/bin/bash
+cd /var/lib/jenkins/workspace/Flask-Student-App-Pipeline
+source venv/bin/activate
+export MONGO_URI="$1"
+export SECRET_KEY="$2"
+exec gunicorn -w 4 -b 0.0.0.0:8000 --timeout 120 --access-logfile app.log --error-logfile app.log app:app
+SCRIPT_EOF
+                        
+                        chmod +x run_app.sh
+                        
+                        # Start with nohup and disown
+                        nohup ./run_app.sh "${MONGO_URI}" "${SECRET_KEY}" >> app.log 2>&1 &
                         echo $! > ${PID_FILE}
+                        disown
                         
-                        # Wait for application to start
                         echo "Waiting for application to start..."
-                        sleep 8
+                        sleep 10
                         
-                        # Verify deployment
                         if ps -p $(cat ${PID_FILE}) > /dev/null 2>&1; then
                             echo "Application deployed successfully!"
                             echo "PID: $(cat ${PID_FILE})"
@@ -109,23 +107,26 @@ pipeline {
             steps {
                 echo '=== Performing Health Check ==='
                 sh '''
-                    # Wait for app to be fully ready
-                    sleep 5
+                    # Retry health check up to 5 times
+                    for i in 1 2 3 4 5; do
+                        sleep 3
+                        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${APP_PORT}/ || echo "000")
+                        
+                        if [ "$HTTP_CODE" = "200" ]; then
+                            echo "Health check PASSED! Application is running."
+                            echo "Application URL: http://35.179.76.28:${APP_PORT}"
+                            echo "Application is healthy and ready to serve requests!"
+                            exit 0
+                        else
+                            echo "Attempt $i: HTTP Status: $HTTP_CODE, retrying..."
+                        fi
+                    done
                     
-                    # Check if application responds
-                    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${APP_PORT}/ || echo "000")
-                    
-                    if [ "$HTTP_CODE" = "200" ]; then
-                        echo "Health check PASSED! Application is running."
-                        echo "Application URL: http://localhost:${APP_PORT}"
-                        echo "Application is healthy and ready to serve requests!"
-                    else
-                        echo "Health check FAILED! HTTP Status: $HTTP_CODE"
-                        echo "=== Application Log ==="
-                        cat app.log
-                        echo "=== End of Log ==="
-                        exit 1
-                    fi
+                    echo "Health check FAILED after 5 attempts!"
+                    echo "=== Application Log ==="
+                    tail -100 app.log
+                    echo "=== End of Log ==="
+                    exit 1
                 '''
             }
         }
@@ -152,7 +153,6 @@ pipeline {
         failure {
             echo '=== Pipeline Failed! ==='
             sh '''
-                # Cleanup on failure
                 if [ -f ${PID_FILE} ]; then
                     kill $(cat ${PID_FILE}) 2>/dev/null || true
                     rm -f ${PID_FILE}
@@ -176,7 +176,6 @@ pipeline {
         always {
             echo '=== Archiving Artifacts ==='
             archiveArtifacts artifacts: 'app.log', allowEmptyArchive: true
-            // REMOVED cleanWs - this was killing the app!
             echo '=== Build complete. Application remains running. ==='
         }
     }
