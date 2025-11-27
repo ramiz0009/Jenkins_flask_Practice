@@ -31,10 +31,13 @@ pipeline {
         stage('Test') {
             steps {
                 echo '=== Running Unit Tests ==='
-                sh '''
-                    . ${VENV_DIR}/bin/activate
-                    pytest tests/ -v --tb=short || exit 1
-                '''
+                withCredentials([string(credentialsId: 'MONGO_URI', variable: 'MONGO_URI')]) {
+                    sh '''
+                        . ${VENV_DIR}/bin/activate
+                        export MONGO_URI="${MONGO_URI}"
+                        pytest tests/ -v --tb=short || exit 1
+                    '''
+                }
             }
         }
         
@@ -67,28 +70,18 @@ pipeline {
                             sleep 2
                         fi
                         
-                        # Start Flask app with Gunicorn and proper environment
+                        # Activate venv and export secrets
+                        . ${VENV_DIR}/bin/activate
+                        export MONGO_URI="${MONGO_URI}"
+                        export SECRET_KEY="${SECRET_KEY}"
+                        
+                        # Start Flask app with Gunicorn
                         cd ${WORKSPACE}
-                        
-                        # Use a wrapper script to ensure environment variables persist
-                        cat > run_app.sh << 'SCRIPT_EOF'
-#!/bin/bash
-cd /var/lib/jenkins/workspace/Flask-Student-App-Pipeline
-source venv/bin/activate
-export MONGO_URI="$1"
-export SECRET_KEY="$2"
-exec gunicorn -w 4 -b 0.0.0.0:8000 --timeout 120 --access-logfile app.log --error-logfile app.log app:app
-SCRIPT_EOF
-                        
-                        chmod +x run_app.sh
-                        
-                        # Start with nohup and disown
-                        nohup ./run_app.sh "${MONGO_URI}" "${SECRET_KEY}" >> app.log 2>&1 &
+                        nohup ${WORKSPACE}/${VENV_DIR}/bin/gunicorn -w 4 -b 0.0.0.0:${APP_PORT} app:app > app.log 2>&1 &
                         echo $! > ${PID_FILE}
-                        disown
                         
                         echo "Waiting for application to start..."
-                        sleep 10
+                        sleep 8
                         
                         if ps -p $(cat ${PID_FILE}) > /dev/null 2>&1; then
                             echo "Application deployed successfully!"
@@ -107,26 +100,19 @@ SCRIPT_EOF
             steps {
                 echo '=== Performing Health Check ==='
                 sh '''
-                    # Retry health check up to 5 times
-                    for i in 1 2 3 4 5; do
-                        sleep 3
-                        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${APP_PORT}/ || echo "000")
-                        
-                        if [ "$HTTP_CODE" = "200" ]; then
-                            echo "Health check PASSED! Application is running."
-                            echo "Application URL: http://35.179.76.28:${APP_PORT}"
-                            echo "Application is healthy and ready to serve requests!"
-                            exit 0
-                        else
-                            echo "Attempt $i: HTTP Status: $HTTP_CODE, retrying..."
-                        fi
-                    done
+                    sleep 5
+                    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${APP_PORT}/ || echo "000")
                     
-                    echo "Health check FAILED after 5 attempts!"
-                    echo "=== Application Log ==="
-                    tail -100 app.log
-                    echo "=== End of Log ==="
-                    exit 1
+                    if [ "$HTTP_CODE" = "200" ]; then
+                        echo "Health check PASSED! Application is running."
+                        echo "Application URL: http://localhost:${APP_PORT}"
+                    else
+                        echo "Health check FAILED! HTTP Status: $HTTP_CODE"
+                        echo "=== Application Log ==="
+                        cat app.log
+                        echo "=== End of Log ==="
+                        exit 1
+                    fi
                 '''
             }
         }
