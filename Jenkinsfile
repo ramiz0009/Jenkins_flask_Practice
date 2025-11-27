@@ -49,16 +49,12 @@ pipeline {
             steps {
                 echo '=== Deploying to Staging Environment ==='
                 
-                // Setup environment variables
                 withCredentials([
                     string(credentialsId: 'MONGO_URI', variable: 'MONGO_URI'),
                     string(credentialsId: 'SECRET_KEY', variable: 'SECRET_KEY')
                 ]) {
                     sh '''
-                        echo "=== Debugging Credential Injection ==="
-                        # Create .env file
-                        echo "MONGO_URI=${MONGO_URI}" > .env
-                        echo "SECRET_KEY=${SECRET_KEY}" >> .env
+                        echo "=== Starting Deployment ==="
                         
                         # Stop previous instance if running
                         if [ -f ${PID_FILE} ]; then
@@ -78,13 +74,20 @@ pipeline {
                             sleep 2
                         fi
                         
-                        # Start application
+                        # Start application with environment variables
                         . ${VENV_DIR}/bin/activate
+                        
+                        # Export environment variables before starting app
+                        export MONGO_URI="${MONGO_URI}"
+                        export SECRET_KEY="${SECRET_KEY}"
+                        
+                        # Start the application
                         nohup python3 app.py > app.log 2>&1 &
                         echo $! > ${PID_FILE}
                         
                         # Wait for application to start
-                        sleep 5
+                        echo "Waiting for application to start..."
+                        sleep 8
                         
                         # Verify deployment
                         if ps -p $(cat ${PID_FILE}) > /dev/null 2>&1; then
@@ -104,8 +107,8 @@ pipeline {
             steps {
                 echo '=== Performing Health Check ==='
                 sh '''
-                    # Wait for app to be ready
-                    sleep 3
+                    # Wait for app to be fully ready
+                    sleep 5
                     
                     # Check if application responds
                     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${APP_PORT}/ || echo "000")
@@ -113,9 +116,12 @@ pipeline {
                     if [ "$HTTP_CODE" = "200" ]; then
                         echo "Health check PASSED! Application is running."
                         echo "Application URL: http://localhost:${APP_PORT}"
+                        echo "Application is healthy and ready to serve requests!"
                     else
                         echo "Health check FAILED! HTTP Status: $HTTP_CODE"
+                        echo "=== Application Log ==="
                         cat app.log
+                        echo "=== End of Log ==="
                         exit 1
                     fi
                 '''
