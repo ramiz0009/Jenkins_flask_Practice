@@ -1,12 +1,12 @@
 pipeline {
     agent any
-    
+
     environment {
         VENV_DIR = 'venv'
         APP_PORT = '8000'
         PID_FILE = 'app.pid'
     }
-    
+
     stages {
         stage('Checkout') {
             steps {
@@ -14,7 +14,7 @@ pipeline {
                 checkout scm
             }
         }
-        
+
         stage('Build') {
             steps {
                 echo '=== Installing Dependencies ==='
@@ -27,7 +27,7 @@ pipeline {
                 '''
             }
         }
-        
+
         stage('Test') {
             steps {
                 echo '=== Running Unit Tests ==='
@@ -40,49 +40,51 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Deploy to Staging') {
             steps {
                 echo '=== Deploying to Staging Environment ==='
-                
+
                 withCredentials([
                     string(credentialsId: 'MONGO_URI', variable: 'MONGO_URI'),
                     string(credentialsId: 'SECRET_KEY', variable: 'SECRET_KEY')
                 ]) {
                     sh '''
                         echo "=== Starting Deployment ==="
-                        
+
                         # Stop previous instance if running
                         if [ -f ${PID_FILE} ]; then
                             PID=$(cat ${PID_FILE})
                             if ps -p $PID > /dev/null 2>&1; then
                                 echo "Stopping previous instance (PID: $PID)"
-                                kill $PID
+                                kill $PID 2>/dev/null || true
                                 sleep 3
                             fi
                             rm -f ${PID_FILE}
                         fi
-                        
+
                         # Kill any process on port 8000
                         if lsof -Pi :${APP_PORT} -sTCP:LISTEN -t >/dev/null 2>&1; then
                             echo "Killing process on port ${APP_PORT}"
-                            kill -9 $(lsof -t -i:${APP_PORT}) || true
+                            kill -9 $(lsof -t -i:${APP_PORT}) 2>/dev/null || true
                             sleep 2
                         fi
-                        
+
                         # Activate venv and export secrets
                         . ${VENV_DIR}/bin/activate
                         export MONGO_URI="${MONGO_URI}"
                         export SECRET_KEY="${SECRET_KEY}"
-                        
+
                         # Start Flask app with Gunicorn
+                        # CRITICAL: Use JENKINS_NODE_COOKIE to prevent Jenkins from killing the process
                         cd ${WORKSPACE}
-                        nohup ${WORKSPACE}/${VENV_DIR}/bin/gunicorn -w 4 -b 0.0.0.0:${APP_PORT} app:app > app.log 2>&1 &
-                        echo $! > ${PID_FILE}
+                        JENKINS_NODE_COOKIE=dontKillMe nohup ${WORKSPACE}/${VENV_DIR}/bin/gunicorn -w 4 -b 0.0.0.0:${APP_PORT} app:app > app.log 2>&1 &
                         
+                        echo $! > ${PID_FILE}
+
                         echo "Waiting for application to start..."
                         sleep 8
-                        
+
                         if ps -p $(cat ${PID_FILE}) > /dev/null 2>&1; then
                             echo "Application deployed successfully!"
                             echo "PID: $(cat ${PID_FILE})"
@@ -95,14 +97,14 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Health Check') {
             steps {
                 echo '=== Performing Health Check ==='
                 sh '''
                     sleep 5
                     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${APP_PORT}/ || echo "000")
-                    
+
                     if [ "$HTTP_CODE" = "200" ]; then
                         echo "Health check PASSED! Application is running."
                         echo "Application URL: http://localhost:${APP_PORT}"
@@ -117,7 +119,7 @@ pipeline {
             }
         }
     }
-    
+
     post {
         success {
             echo '=== Pipeline Completed Successfully! ==='
@@ -135,7 +137,7 @@ pipeline {
                 mimeType: 'text/html'
             )
         }
-        
+
         failure {
             echo '=== Pipeline Failed! ==='
             sh '''
@@ -158,7 +160,7 @@ pipeline {
                 mimeType: 'text/html'
             )
         }
-        
+
         always {
             echo '=== Archiving Artifacts ==='
             archiveArtifacts artifacts: 'app.log', allowEmptyArchive: true
