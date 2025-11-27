@@ -81,8 +81,10 @@ pipeline {
                         export MONGO_URI="${MONGO_URI}"
                         export SECRET_KEY="${SECRET_KEY}"
                         
-                        # Start the application
-                        nohup python3 app.py > app.log 2>&1 &
+                        # Start the application in background with nohup
+                        # Use absolute path for venv to ensure it persists
+                        cd ${WORKSPACE}
+                        nohup ${WORKSPACE}/${VENV_DIR}/bin/python3 app.py > app.log 2>&1 &
                         echo $! > ${PID_FILE}
                         
                         # Wait for application to start
@@ -139,7 +141,7 @@ pipeline {
                     <p><strong>Job:</strong> ${env.JOB_NAME}</p>
                     <p><strong>Build Number:</strong> ${env.BUILD_NUMBER}</p>
                     <p><strong>Status:</strong> SUCCESS</p>
-                    <p><strong>Application URL:</strong> http://your-server:${APP_PORT}</p>
+                    <p><strong>Application URL:</strong> http://35.179.76.28:${APP_PORT}</p>
                     <p>Check console output at: ${env.BUILD_URL}</p>
                 """,
                 to: 'sheikhramiz666@gmail.com',
@@ -174,7 +176,8 @@ pipeline {
         always {
             echo '=== Archiving Artifacts ==='
             archiveArtifacts artifacts: 'app.log', allowEmptyArchive: true
-            cleanWs(deleteDirs: true, patterns: [[pattern: 'venv/**', type: 'INCLUDE']])
+            // REMOVED cleanWs - this was killing the app!
+            echo '=== Build complete. Application remains running. ==='
         }
     }
 }
