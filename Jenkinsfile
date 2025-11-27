@@ -55,6 +55,7 @@ pipeline {
                     string(credentialsId: 'SECRET_KEY', variable: 'SECRET_KEY')
                 ]) {
                     sh '''
+                        echo "=== Debugging Credential Injection ==="
                         # Create .env file
                         echo "MONGO_URI=${MONGO_URI}" > .env
                         echo "SECRET_KEY=${SECRET_KEY}" >> .env
